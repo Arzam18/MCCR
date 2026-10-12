@@ -4,22 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "initial = rate initial connected pool; entrant = rate one newcomer against frozen ratings"
+        description: "initial = calculate the initial pool from pgn/initial.pgn; entrant = add one new engine from another PGN"
         required: true
         default: initial
         type: choice
         options: [initial, entrant]
       engine:
-        description: "Exact PGN player name for entrant mode"
+        description: "Optional exact PGN player name for the new entrant; leave blank to auto-detect"
         required: false
         type: string
+  # PGN uploads trigger automatic calculation. Code/config changes are run manually
+  # so a workflow update cannot accidentally recalculate the published list.
   push:
     paths:
       - "pgn/**/*.pgn"
       - "pgn/*.pgn"
-      - "ratings/base_ratings.csv"
-      - "mccr_rating.py"
-      - ".github/workflows/mccr-rating.yml"
 
 permissions:
   contents: write
@@ -45,64 +44,102 @@ jobs:
       - name: Install PGN parser
         run: python -m pip install --upgrade pip python-chess
 
-      # Fetch and compile a public BayesElo source mirror for inspection/validation.
-      # The starter script's ratings are explicitly NOT BayesElo ratings yet.
-      - name: Download and compile BayesElo reference
-        continue-on-error: true
+      - name: Download and compile official BayesElo
+        shell: bash
         run: |
-          git clone --depth 1 https://github.com/Gomocup/GomocupEloRating.git /tmp/GomocupEloRating
-          if [ -f /tmp/GomocupEloRating/bayeselo.cpp ]; then
-            g++ -O2 -std=c++11 /tmp/GomocupEloRating/bayeselo.cpp -o /tmp/bayeselo
-            echo "BayesElo compiled at /tmp/bayeselo"
-          else
-            echo "BayesElo source was not found in this mirror; continuing with MCCR estimator."
+          set -euo pipefail
+          curl --fail --location --retry 3 https://www.remi-coulom.fr/Bayesian-Elo/bayeselo.tar.bz2 -o /tmp/bayeselo.tar.bz2
+          mkdir -p /tmp/bayeselo-src
+          tar -xjf /tmp/bayeselo.tar.bz2 -C /tmp/bayeselo-src
+          SRC_DIR="$(find /tmp/bayeselo-src -type f -name Makefile -printf '%h\n' | head -n 1)"
+          if [ -z "$SRC_DIR" ]; then
+            echo "Could not find the BayesElo Makefile in the official source archive." >&2
+            exit 1
           fi
+          make -C "$SRC_DIR" bayeselo
+          BIN="$(find "$SRC_DIR" -type f -name bayeselo -executable | head -n 1)"
+          if [ -z "$BIN" ]; then
+            echo "BayesElo compilation did not produce an executable." >&2
+            exit 1
+          fi
+          sudo install -m 0755 "$BIN" /usr/local/bin/bayeselo
+          /usr/local/bin/bayeselo <<'EOF'
+          ?
+          x
+          EOF
 
-      - name: Validate PGN input
+      - name: Validate PGN files
+        shell: bash
         run: |
+          set -euo pipefail
           python - <<'PY'
           from pathlib import Path
           import chess.pgn
-          files = list(Path("pgn").rglob("*.pgn"))
+          pgn_dir = Path("pgn")
+          files = sorted(pgn_dir.rglob("*.pgn"))
           if not files:
-              raise SystemExit("No PGN files under pgn/. Upload your PGN first.")
-          games = 0
+              raise SystemExit("No PGN files under pgn/. Add pgn/initial.pgn.")
+          total = 0
           for path in files:
+              count = 0
               with path.open(encoding="utf-8", errors="replace") as f:
                   while True:
-                      g = chess.pgn.read_game(f)
-                      if g is None:
+                      game = chess.pgn.read_game(f)
+                      if game is None:
                           break
-                      if g.headers.get("Result") in ("1-0", "0-1", "1/2-1/2"):
-                          games += 1
-          print(f"Found {games} completed games in {len(files)} PGN file(s).")
-          if not games:
-              raise SystemExit("No completed games found.")
+                      h = game.headers
+                      if h.get("White") and h.get("Black") and h.get("White") != h.get("Black") and h.get("Result") in {"1-0", "0-1", "1/2-1/2"}:
+                          count += 1
+              print(f"{path}: {count} completed games")
+              total += count
+          if total == 0:
+              raise SystemExit("No completed games with valid White/Black/Result tags found.")
           PY
 
-      - name: Calculate rating list
+      - name: Determine rating mode
+        id: rating_mode
+        shell: bash
         env:
-          MCCR_MODE: ${{ inputs.mode || 'initial' }}
-          MCCR_ENGINE: ${{ inputs.engine || '' }}
-          MCCR_ANCHOR_ENGINE: Stockfish
-          MCCR_ANCHOR_ELO: "3000"
+          REQUESTED_MODE: ${{ inputs.mode || '' }}
+          BEFORE_SHA: ${{ github.event.before || '' }}
+          CURRENT_SHA: ${{ github.sha }}
         run: |
-          if [ "$MCCR_MODE" = "entrant" ]; then
-            test -n "$MCCR_ENGINE" || { echo "Enter engine name for entrant mode."; exit 1; }
-            python mccr_rating.py --mode entrant --engine "$MCCR_ENGINE"
+          set -euo pipefail
+          if [ -n "$REQUESTED_MODE" ]; then
+            MODE="$REQUESTED_MODE"
+          elif [ ! -f ratings/base_ratings.csv ] || [ "$(wc -l < ratings/base_ratings.csv)" -le 1 ]; then
+            MODE=initial
+          elif [ -n "$BEFORE_SHA" ] && [[ ! "$BEFORE_SHA" =~ ^0+$ ]] && git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA" | grep -qx 'pgn/initial.pgn'; then
+            MODE=initial
           else
-            python mccr_rating.py --mode initial
+            MODE=entrant
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "Selected MCCR mode: $MODE"
+
+      - name: Calculate BayesElo rating list
+        env:
+          MCCR_MODE: ${{ steps.rating_mode.outputs.mode }}
+          MCCR_ENGINE: ${{ inputs.engine || '' }}
+          MCCR_ANCHOR_ELO: "3200"
+          BAYESELO_BIN: /usr/local/bin/bayeselo
+        shell: bash
+        run: |
+          if [ -n "$MCCR_ENGINE" ]; then
+            python mccr_rating.py --mode "$MCCR_MODE" --engine "$MCCR_ENGINE"
+          else
+            python mccr_rating.py --mode "$MCCR_MODE"
           fi
 
-      - name: Commit generated ratings
+      - name: Commit generated ratings and frozen reference
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html ratings/mccr_ratings.csv
+          git add index.html ratings/mccr_ratings.csv ratings/base_ratings.csv
           if git diff --cached --quiet; then
             echo "No rating changes to commit."
           else
-            git commit -m "Update MCCR rating list"
+            git commit -m "Update MCCR BayesElo rating list"
             git push
           fi
 
@@ -113,3 +150,4 @@ jobs:
           path: |
             index.html
             ratings/mccr_ratings.csv
+            ratings/base_ratings.csv
