@@ -98,7 +98,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html ratings/mccr_ratings.csv ratings/base_ratings.csv ratings/games.jsonl ratings/engine_aliases.json ratings/mccr_config.json
+          # Force-add generated database files even if a repository .gitignore pattern
+          # (for example *.jsonl) would otherwise hide them from Git.
+          test -f ratings/games.jsonl || { echo "Expected cumulative database ratings/games.jsonl was not created by mccr_rating.py." >&2; exit 1; }
+          git add -f index.html ratings/mccr_ratings.csv ratings/base_ratings.csv ratings/games.jsonl ratings/engine_aliases.json ratings/mccr_config.json
           if git diff --cached --quiet; then
             echo "No rating or database changes to commit."
           else
