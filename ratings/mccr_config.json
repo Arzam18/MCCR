@@ -1,0 +1,12 @@
+{
+  "engines": {
+    "Cinder 20261010": {
+      "display_name": "Cinder 20261010"
+    },
+    "Stockfish 260930": {
+      "display_name": "Stockfish 260930"
+    }
+  },
+  "anchor_id": "Stockfish 260930",
+  "initialized": true
+}
