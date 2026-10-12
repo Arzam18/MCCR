@@ -1,286 +1,266 @@
 #!/usr/bin/env python3
-"""MCCR rating publisher using the official BayesElo command-line calculator."""
+"""MCCR cumulative BayesElo publisher with persistent, deduplicated game storage."""
 from __future__ import annotations
-import argparse
-import csv
-import os
-import re
-import subprocess
-import sys
+import argparse, csv, hashlib, json, os, re, subprocess, tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-
-try:
-    import chess.pgn
-except ImportError as exc:
-    raise SystemExit("Missing dependency: install python-chess") from exc
+import chess.pgn
+from chess.pgn import StringExporter
 
 ROOT = Path(__file__).resolve().parent
-PGN_DIR = ROOT / "pgn"
-RATINGS_DIR = ROOT / "ratings"
-BASE_CSV = RATINGS_DIR / "base_ratings.csv"
-OUT_CSV = RATINGS_DIR / "mccr_ratings.csv"
-OUT_HTML = ROOT / "index.html"
-BAYESELO = Path(os.getenv("BAYESELO_BIN", "/usr/local/bin/bayeselo"))
-INITIAL_PGN = PGN_DIR / "initial.pgn"
+PGN_DIR = ROOT / 'pgn'
+RATINGS_DIR = ROOT / 'ratings'
+BASE_CSV = RATINGS_DIR / 'base_ratings.csv'
+OUT_CSV = RATINGS_DIR / 'mccr_ratings.csv'
+OUT_HTML = ROOT / 'index.html'
+DB_FILE = RATINGS_DIR / 'games.jsonl'
+ALIASES_FILE = RATINGS_DIR / 'engine_aliases.json'
+CONFIG_FILE = RATINGS_DIR / 'mccr_config.json'
+BAYESELO = Path(os.getenv('BAYESELO_BIN', '/usr/local/bin/bayeselo'))
+INITIAL_PGN = PGN_DIR / 'initial.pgn'
+VALID_RESULTS = {'1-0', '0-1', '1/2-1/2'}
 
 
-def read_games(paths: list[Path]) -> list[dict]:
-    games: list[dict] = []
-    for path in paths:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            while True:
-                game = chess.pgn.read_game(handle)
-                if game is None:
-                    break
-                headers = game.headers
-                white = headers.get("White", "").strip()
-                black = headers.get("Black", "").strip()
-                result = headers.get("Result", "").strip()
-                if not white or not black or white == black or result not in {"1-0", "0-1", "1/2-1/2"}:
-                    continue
-                games.append({"white": white, "black": black, "result": result, "file": path.name})
-    return games
+def load_json(path, default):
+    if not path.exists(): return default
+    return json.loads(path.read_text(encoding='utf-8'))
 
 
-def read_base() -> dict[str, float]:
-    result: dict[str, float] = {}
+def save_json(path, obj):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+
+def read_base():
+    result = {}
     if BASE_CSV.exists():
-        with BASE_CSV.open(newline="", encoding="utf-8-sig") as handle:
-            for row in csv.DictReader(handle):
-                name = (row.get("engine") or row.get("name") or "").strip()
-                value = (row.get("rating") or row.get("elo") or "").strip()
-                if name and value:
+        with BASE_CSV.open(newline='', encoding='utf-8-sig') as f:
+            for row in csv.DictReader(f):
+                key = (row.get('engine_id') or row.get('engine') or '').strip()
+                if key:
                     try:
-                        result[name] = float(value)
-                    except ValueError:
-                        continue
+                        result[key] = {'rating': float(row['rating']), 'plus': int(float(row.get('plus') or 0)), 'minus': int(float(row.get('minus') or 0)), 'engine': (row.get('engine') or key).strip()}
+                    except (ValueError, KeyError): pass
     return result
 
 
-def write_base(ratings: dict[str, float]) -> None:
+def write_base(base):
     RATINGS_DIR.mkdir(parents=True, exist_ok=True)
-    with BASE_CSV.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["engine", "rating"])
-        for name, rating in sorted(ratings.items(), key=lambda item: (-item[1], item[0].casefold())):
-            writer.writerow([name, f"{rating:.1f}"])
+    with BASE_CSV.open('w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f); w.writerow(['engine_id', 'engine', 'rating', 'plus', 'minus'])
+        for eid, r in sorted(base.items(), key=lambda x: (-x[1]['rating'], x[1]['engine'].casefold())):
+            w.writerow([eid, r['engine'], f"{r['rating']:.1f}", r.get('plus', 0), r.get('minus', 0)])
 
 
-def wdl_stats(games: list[dict]) -> dict[str, dict]:
-    stats: dict[str, dict] = defaultdict(lambda: {"games": 0, "wins": 0, "draws": 0, "losses": 0, "score": 0.0, "opponents": set()})
-    for game in games:
-        w, b, result = game["white"], game["black"], game["result"]
-        stats[w]["games"] += 1
-        stats[b]["games"] += 1
-        stats[w]["opponents"].add(b)
-        stats[b]["opponents"].add(w)
-        if result == "1-0":
-            stats[w]["wins"] += 1; stats[w]["score"] += 1
-            stats[b]["losses"] += 1
-        elif result == "0-1":
-            stats[b]["wins"] += 1; stats[b]["score"] += 1
-            stats[w]["losses"] += 1
-        else:
-            stats[w]["draws"] += 1; stats[b]["draws"] += 1
-            stats[w]["score"] += 0.5; stats[b]["score"] += 0.5
-    return stats
+def valid_game(game):
+    h = game.headers
+    return bool(h.get('White','').strip() and h.get('Black','').strip() and h['White'].strip() != h['Black'].strip() and h.get('Result') in VALID_RESULTS)
 
 
-def pgn_players(paths: list[Path]) -> set[str]:
-    return {name for game in read_games(paths) for name in (game["white"], game["black"])}
+def game_fingerprint(game):
+    h = game.headers
+    moves = ' '.join(m.uci() for m in game.mainline_moves())
+    identity = '\x1f'.join([h.get('White','').strip(), h.get('Black','').strip(), h.get('Result',''), h.get('Date',''), h.get('Round',''), h.get('Event',''), moves])
+    return hashlib.sha256(identity.encode('utf-8')).hexdigest()
 
 
-def choose_stockfish_name(names: set[str], preferred: str = "") -> str:
-    if preferred and preferred in names:
-        return preferred
-    matches = sorted((name for name in names if name.casefold().startswith("stockfish")), key=str.casefold)
-    if not matches:
-        raise RuntimeError("Could not find a Stockfish player in the PGNs. MCCR uses Stockfish as the 3200-point anchor; check the PGN White/Black names.")
-    return matches[0]
+def load_db():
+    games, seen = [], set()
+    if DB_FILE.exists():
+        with DB_FILE.open(encoding='utf-8') as f:
+            for line in f:
+                if not line.strip(): continue
+                item = json.loads(line)
+                fp = item.get('fingerprint')
+                if fp and fp not in seen:
+                    games.append(item); seen.add(fp)
+    return games, seen
 
 
-def parse_bayeselo_ratings(text: str) -> dict[str, dict]:
-    """Parse BayesElo's `ratings` table while preserving engine names with spaces."""
-    parsed: dict[str, dict] = {}
-    # Expected columns: rank, name, Elo, +, -, games, score%, opponent, draws%.
-    pattern = re.compile(r"^\s*(\d+)\s+(.+?)\s+(-?\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+%)\s+(-?\d+)\s+([\d.]+%)\s*$")
+def read_pgn_files(paths):
+    for path in paths:
+        with path.open('r', encoding='utf-8', errors='replace') as f:
+            while True:
+                g = chess.pgn.read_game(f)
+                if g is None: break
+                if valid_game(g): yield path, g
+
+
+def parse_bayeselo_ratings(text):
+    parsed = {}
+    # BayesElo's ratings table: rank name Elo + - games score% opponent draws%.
+    pat = re.compile(r'^\s*(\d+)\s+(.+?)\s+(-?\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)%\s+(-?\d+)\s+([\d.]+)%\s*$')
     for line in text.splitlines():
-        match = pattern.match(line)
-        if not match:
-            continue
-        rank, name, elo, plus, minus, games, score_pct, opponent, draws_pct = match.groups()
-        parsed[name.strip()] = {"rating": float(elo), "plus": int(plus), "minus": int(minus), "bayes_games": int(games), "opponent_rating": float(opponent)}
+        m = pat.match(line)
+        if m:
+            _, name, elo, plus, minus, ngames, score, opp, draws = m.groups()
+            parsed[name.strip()] = {'rating': float(elo), 'plus': int(plus), 'minus': int(minus), 'bayes_games': int(ngames), 'opponent_rating': float(opp)}
     if not parsed:
-        raise RuntimeError("Could not parse BayesElo ratings output. Output was:\n" + text[-5000:])
+        raise RuntimeError('Could not parse BayesElo ratings table. BayesElo output follows:\n' + text[-6000:])
     return parsed
 
 
-def run_bayeselo(paths: list[Path], stockfish_name: str, offset: float = 3200.0) -> dict[str, dict]:
-    if not BAYESELO.is_file():
-        raise RuntimeError(f"BayesElo executable not found at {BAYESELO}. The GitHub Actions workflow must build it first.")
-    if not paths:
-        raise RuntimeError("No PGN files selected for BayesElo.")
-    # BayesElo command names may contain spaces; the engine name is the remainder of the offset command.
-    commands = [f'readpgn {path.resolve()}' for path in paths]
-    commands += ["elo", "mm 0 1", "exactdist", f"offset {int(round(offset))} {stockfish_name}", "ratings", "x", "x", ""]
-    proc = subprocess.run([str(BAYESELO)], input="\n".join(commands), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=ROOT, timeout=180)
-    # BayesElo's ratings table is normally printed to stdout; capture it from the transcript.
-    parsed = parse_bayeselo_ratings(proc.stdout)
-    if proc.returncode != 0:
-        raise RuntimeError(f"BayesElo exited with status {proc.returncode}:\n{proc.stdout[-4000:]}")
-    return parsed
+def run_bayeselo(games, anchor_id, anchor_rating=3200):
+    if not BAYESELO.is_file(): raise RuntimeError(f'BayesElo executable not found: {BAYESELO}')
+    # Build a temporary PGN from the persistent database. IDs, not changing display labels,
+    # are the stable player identities, so engine version updates combine old and new games.
+    with tempfile.TemporaryDirectory(prefix='mccr-') as td:
+        pgn_path = Path(td) / 'cumulative.pgn'
+        with pgn_path.open('w', encoding='utf-8') as out:
+            for i, item in enumerate(games, 1):
+                g = chess.pgn.Game()
+                g.headers['Event'] = f'MCCR cumulative game {i}'
+                g.headers['Site'] = 'MCCR'
+                g.headers['Date'] = item.get('date') or '????.??.??'
+                g.headers['Round'] = str(i)
+                g.headers['White'] = item['white_id']; g.headers['Black'] = item['black_id']; g.headers['Result'] = item['result']
+                board = g.board()
+                node = g
+                for uci in item.get('moves_uci', []):
+                    try: move = board.parse_uci(uci)
+                    except ValueError: break
+                    node = node.add_variation(move)
+                    board.push(move)
+                out.write(g.accept(StringExporter(headers=True, variations=False, comments=False)) + '\n\n')
+        cmds = [f'readpgn {pgn_path}', 'elo', 'mm 0 1', 'exactdist', f'offset {int(round(anchor_rating))} {anchor_id}', 'ratings', 'x', '']
+        proc = subprocess.run([str(BAYESELO)], input='\n'.join(cmds), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=ROOT, timeout=240)
+        if proc.returncode != 0: raise RuntimeError(f'BayesElo failed ({proc.returncode}):\n{proc.stdout[-6000:]}')
+        return parse_bayeselo_ratings(proc.stdout)
 
 
-def html_escape(value: object) -> str:
-    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
+def stats_for(games):
+    s = defaultdict(lambda: {'games':0,'wins':0,'draws':0,'losses':0,'score':0.0,'opponents':set()})
+    for g in games:
+        w,b,r = g['white_id'],g['black_id'],g['result']
+        s[w]['games'] += 1; s[b]['games'] += 1; s[w]['opponents'].add(b); s[b]['opponents'].add(w)
+        if r == '1-0': s[w]['wins'] += 1; s[w]['score'] += 1; s[b]['losses'] += 1
+        elif r == '0-1': s[b]['wins'] += 1; s[b]['score'] += 1; s[w]['losses'] += 1
+        else: s[w]['draws'] += 1; s[b]['draws'] += 1; s[w]['score'] += .5; s[b]['score'] += .5
+    return s
 
 
-def write_outputs(rows: list[dict], method_note: str) -> None:
-    rows.sort(key=lambda row: (-float(row["rating"]), row["engine"].casefold()))
-    RATINGS_DIR.mkdir(parents=True, exist_ok=True)
-    fields = ["rank", "engine", "rating", "plus", "minus", "score_pct", "opponent_rating", "draw_pct", "games", "wins", "draws", "losses", "opponents", "status"]
-    with OUT_CSV.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for rank, row in enumerate(rows, 1):
-            writer.writerow({"rank": rank, **{key: row.get(key, "") for key in fields if key != "rank"}})
-
-    html_rows = []
-    for rank, row in enumerate(rows, 1):
-        html_rows.append(
-            "<tr>"
-            f"<td>{rank}</td><td>{html_escape(row['engine'])}</td>"
-            f"<td class='num'>{float(row['rating']):.0f}</td>"
-            f"<td class='num'>+{row.get('plus', 0)}</td><td class='num'>−{row.get('minus', 0)}</td>"
-            f"<td class='num'>{row.get('score_pct', 0):.1f}%</td>"
-            f"<td class='num'>{row.get('opponent_rating', '—')}</td><td class='num'>{row.get('draw_pct', 0):.1f}%</td>"
-            f"<td class='num'>{row.get('games', 0)}</td><td class='num'>{row.get('wins', 0)}</td>"
-            f"<td class='num'>{row.get('draws', 0)}</td><td class='num'>{row.get('losses', 0)}</td>"
-            f"<td class='num'>{row.get('opponents', 0)}</td><td>{html_escape(row.get('status', 'provisional'))}</td></tr>"
-        )
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    page = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MCCR Rating List</title><style>
-:root{{color-scheme:light}}body{{font:14px system-ui,Arial,sans-serif;margin:1rem;line-height:1.45;color:#20252b;background:#e5f3ed}}
-h1{{text-align:center;color:#267747;margin:.2rem 0}}.sub{{color:#65736d;text-align:center}}.note{{padding:.7rem;border:1px solid #9bb9aa;border-radius:.4rem;margin:1rem 0;background:#f5fbf7}}
-.wrap{{overflow-x:auto;background:white}}table{{border-collapse:collapse;width:100%;min-width:1120px;font-size:13px}}th{{background:#7899e8;color:white;text-align:center;white-space:nowrap}}
-td,th{{padding:.42rem .5rem;border:1px solid #bdc9c4}}td:nth-child(1){{text-align:right;font-weight:600}}td:nth-child(2){{font-weight:600}}tbody tr:nth-child(even){{background:#edf2fa}}.num{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}.footer{{margin-top:.8rem;color:#65736d;font-size:12px}}
-</style></head><body><h1>MCCR Rating List</h1><div class="sub">Mobile Computer Chess Rating · Generated {stamp}</div>
-<div class="note"><b>Rating method:</b> {html_escape(method_note)}<br><b>Anchor:</b> Stockfish = 3200 MCCR Elo. This is an internal Android-engine rating scale and is not directly comparable to CCRL ratings.<br><b>W/D/L:</b> wins, draws and losses from all PGNs included in the current rating update.</div>
-<div class="wrap"><table><thead><tr><th>Rank</th><th>Engine</th><th>Rating</th><th>+</th><th>−</th><th>Score</th><th>Avg. Opponent</th><th>Draws</th><th>Games</th><th>W</th><th>D</th><th>L</th><th>Opponents</th><th>Status</th></tr></thead><tbody>{''.join(html_rows)}</tbody></table></div>
-<p class="footer">Ratings are statistical estimates. Small differences may not be meaningful. Only completed, valid-result PGN games are counted.</p></body></html>"""
-    OUT_HTML.write_text(page, encoding="utf-8")
+def esc(x):
+    return str(x).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;').replace("'",'&#39;')
 
 
-def make_rows(games: list[dict], rating_map: dict[str, dict], fixed_ratings: dict[str, float] | None = None, entrant: str | None = None) -> list[dict]:
-    stats = wdl_stats(games)
-    names = set(stats)
-    rows = []
-    for name in names:
-        if fixed_ratings is not None and name in fixed_ratings:
-            rating = fixed_ratings[name]
-            status = "established / frozen"
-            plus = minus = 0
-        else:
-            if name not in rating_map:
-                continue
-            rating = rating_map[name]["rating"]
-            plus = rating_map[name]["plus"]
-            minus = rating_map[name]["minus"]
-            status = "initial / provisional" if entrant is None else ("new entrant / provisional" if name == entrant else "established / frozen")
-        st = stats[name]
-        total = st["games"]
-        score_pct = (100.0 * st["score"] / total) if total else 0.0
-        draw_pct = (100.0 * st["draws"] / total) if total else 0.0
-        opp_names = st["opponents"]
-        if fixed_ratings is not None:
-            known_opps = [fixed_ratings[o] for o in opp_names if o in fixed_ratings]
-            if name in rating_map:
-                known_opps += [fixed_ratings[o] for o in opp_names if o not in fixed_ratings and o in fixed_ratings]
-            avg_opp = round(sum(known_opps) / len(known_opps)) if known_opps else "—"
-        else:
-            avg_opp = rating_map.get(name, {}).get("opponent_rating", "—")
-        rows.append({"engine": name, "rating": rating, "plus": plus, "minus": minus, "score_pct": score_pct,
-                     "opponent_rating": avg_opp, "draw_pct": draw_pct, "games": total,
-                     "wins": st["wins"], "draws": st["draws"], "losses": st["losses"],
-                     "opponents": len(opp_names), "status": status})
-    return rows
+def write_outputs(rows, note):
+    rows.sort(key=lambda r: (-r['rating'], r['engine'].casefold()))
+    fields = ['rank','engine','rating','plus','minus','score_pct','opponent_rating','draw_pct','games','wins','draws','losses','opponents','status']
+    with OUT_CSV.open('w', newline='', encoding='utf-8') as f:
+        w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
+        for rank, row in enumerate(rows, 1): w.writerow({'rank':rank, **{k:row.get(k,'') for k in fields if k != 'rank'}})
+    body = []
+    for rank, r in enumerate(rows,1):
+        body.append('<tr>' + f"<td>{rank}</td><td>{esc(r['engine'])}</td><td>{r['rating']:.0f}</td><td>+{r['plus']}</td><td>−{r['minus']}</td><td>{r['score_pct']:.1f}%</td><td>{r['opponent_rating']}</td><td>{r['draw_pct']:.1f}%</td><td>{r['games']}</td><td>{r['wins']}</td><td>{r['draws']}</td><td>{r['losses']}</td><td>{r['opponents']}</td><td>{esc(r['status'])}</td></tr>")
+    stamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+    OUT_HTML.write_text(f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MCCR Rating List</title><style>body{{font:14px system-ui,Arial;margin:1rem;color:#20252b;background:#e5f3ed;line-height:1.45}}h1{{text-align:center;color:#267747}}.sub{{text-align:center;color:#65736d}}.note{{padding:.7rem;border:1px solid #9bb9aa;border-radius:.4rem;margin:1rem 0;background:#f5fbf7}}.wrap{{overflow-x:auto;background:white}}table{{border-collapse:collapse;width:100%;min-width:1120px;font-size:13px}}th{{background:#7899e8;color:white;white-space:nowrap}}td,th{{padding:.42rem .5rem;border:1px solid #bdc9c4;text-align:right;white-space:nowrap}}td:nth-child(2),th:nth-child(2){{text-align:left}}tbody tr:nth-child(even){{background:#edf2fa}}</style></head><body><h1>MCCR Rating List</h1><div class="sub">Mobile Computer Chess Rating · Generated {stamp}</div><div class="note"><b>Method:</b> {esc(note)}<br><b>Anchor:</b> initial Stockfish reference = 3200 MCCR Elo. Not directly comparable to CCRL.<br><b>History:</b> ratings and W/D/L use all unique games retained in ratings/games.jsonl, even after source PGNs are deleted.</div><div class="wrap"><table><thead><tr><th>Rank</th><th>Engine</th><th>Rating</th><th>+</th><th>−</th><th>Score</th><th>Avg. Opponent</th><th>Draws</th><th>Games</th><th>W</th><th>D</th><th>L</th><th>Opponents</th><th>Status</th></tr></thead><tbody>{''.join(body)}</tbody></table></div></body></html>''', encoding='utf-8')
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Publish MCCR ratings using BayesElo")
-    parser.add_argument("--mode", choices=("initial", "entrant"), default=os.getenv("MCCR_MODE", "initial"))
-    parser.add_argument("--engine", default=os.getenv("MCCR_ENGINE", ""), help="Exact PGN name of new entrant; omit to auto-detect a single unranked engine")
-    args = parser.parse_args()
-    if not BAYESELO.is_file():
-        raise SystemExit(f"BayesElo executable not found: {BAYESELO}")
-
-    all_paths = sorted(PGN_DIR.rglob("*.pgn"))
-    if not all_paths:
-        raise SystemExit("No PGN files found under pgn/. Add pgn/initial.pgn first.")
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--action', choices=['initial','add','update'], default=os.getenv('MCCR_ACTION','initial'))
+    p.add_argument('--engine', default=os.getenv('MCCR_ENGINE',''), help='Exact engine player name in the uploaded PGN')
+    p.add_argument('--display-name', default=os.getenv('MCCR_DISPLAY_NAME',''))
+    p.add_argument('--replace-existing', default=os.getenv('MCCR_REPLACE_EXISTING',''), help='Existing display name to replace on update')
+    args = p.parse_args()
+    aliases = load_json(ALIASES_FILE, {})
+    config = load_json(CONFIG_FILE, {})
+    entities = config.setdefault('engines', {})
+    db, seen = load_db()
     base = read_base()
-    if args.mode == "initial":
-        if not INITIAL_PGN.is_file():
-            raise SystemExit("Initial mode requires pgn/initial.pgn. Put the complete initial-pool games in that file.")
-        paths = [INITIAL_PGN]
-        games = read_games(paths)
-        if not games:
-            raise SystemExit("pgn/initial.pgn contains no completed valid games.")
-        names = {name for game in games for name in (game["white"], game["black"])}
-        anchor = choose_stockfish_name(names, os.getenv("MCCR_ANCHOR_ENGINE", ""))
-        bayes = run_bayeselo(paths, anchor, float(os.getenv("MCCR_ANCHOR_ELO", "3200")))
-        missing = names - set(bayes)
-        if missing:
-            raise RuntimeError("BayesElo did not return ratings for: " + ", ".join(sorted(missing)))
-        # Persist the initial pool as the frozen reference for later entrants.
-        initial_ratings = {name: bayes[name]["rating"] for name in names}
-        write_base(initial_ratings)
-        rows = make_rows(games, bayes)
-        note = f"BayesElo maximum-likelihood ratings; Stockfish anchor {anchor} = 3200. Initial pool calculated only from pgn/initial.pgn."
-    else:
-        if not INITIAL_PGN.is_file():
-            raise SystemExit("Entrant mode requires pgn/initial.pgn to preserve the original reference pool.")
-        if not base:
-            raise SystemExit("No frozen reference ratings found in ratings/base_ratings.csv. Run initial mode first.")
-        entrant_paths = [path for path in all_paths if path.name.lower() != "initial.pgn"]
-        if not entrant_paths:
-            raise SystemExit("Entrant mode needs a PGN other than initial.pgn, e.g. pgn/Caipora_3.8.pgn.")
-        entrant_games = read_games(entrant_paths)
-        all_games = read_games([INITIAL_PGN] + entrant_paths)
-        if not entrant_games:
-            raise SystemExit("No completed valid games found in entrant PGNs.")
-        names_in_entrant_files = {name for game in entrant_games for name in (game["white"], game["black"])}
-        newcomers = names_in_entrant_files - set(base)
-        entrant = args.engine.strip() if args.engine.strip() else ""
-        if entrant:
-            if entrant not in newcomers:
-                raise SystemExit(f"Selected entrant {entrant!r} is not an unranked player in the non-initial PGNs. Unranked names: {sorted(newcomers)}")
-        else:
-            if len(newcomers) != 1:
-                raise SystemExit("Could not identify exactly one new engine in the non-initial PGNs. Add --engine with the exact PGN player name. Unranked names: " + ", ".join(sorted(newcomers)))
-            entrant = next(iter(newcomers))
-        if any(name not in base for name in names_in_entrant_files if name != entrant):
-            raise SystemExit("Entrant PGNs contain additional unranked opponents. Each update should introduce one new engine against already-rated engines only.")
-        all_names = {name for game in all_games for name in (game["white"], game["black"])}
-        anchor = choose_stockfish_name(all_names, os.getenv("MCCR_ANCHOR_ENGINE", ""))
-        bayes = run_bayeselo([INITIAL_PGN] + entrant_paths, anchor, float(os.getenv("MCCR_ANCHOR_ELO", "3200")))
-        if entrant not in bayes:
-            raise RuntimeError(f"BayesElo did not return a rating for new entrant {entrant!r}.")
-        # Existing published ratings stay frozen; the new entrant's BayesElo estimate is aligned to Stockfish=3200.
-        published = dict(base)
-        published[entrant] = bayes[entrant]["rating"]
-        write_base(published)
-        rows = make_rows(all_games, bayes, fixed_ratings={name: rating for name, rating in base.items()}, entrant=entrant)
-        note = f"BayesElo estimate for new entrant {entrant}; Stockfish anchor {anchor} = 3200. Previously published ratings remain frozen; only the new engine's rating is added."
-    write_outputs(rows, note)
-    print(f"BayesElo processed {len(games if args.mode == 'initial' else all_games)} games for {len(rows)} displayed engines.")
-    print(f"Generated {OUT_HTML.relative_to(ROOT)} and {OUT_CSV.relative_to(ROOT)}")
 
-if __name__ == "__main__":
-    try:
-        main()
-    except (RuntimeError, subprocess.SubprocessError, OSError) as exc:
-        raise SystemExit(f"MCCR rating update failed: {exc}")
+    paths = sorted(PGN_DIR.rglob('*.pgn'))
+    if args.action == 'initial':
+        if not INITIAL_PGN.exists(): raise SystemExit('Initial action requires pgn/initial.pgn.')
+        # A deliberate initial run is allowed only before a database has been established.
+        if db and config.get('initialized'):
+            raise SystemExit('MCCR is already initialized. Use Add engine or Update existing engine; do not rerun initial and overwrite history.')
+        # Migration path: if the previous version already published a base CSV but had no
+        # permanent database, import every PGN still present so its history is not omitted.
+        legacy_base = BASE_CSV.exists() and BASE_CSV.stat().st_size > 20 and not db
+        initial_import_paths = paths if legacy_base else [INITIAL_PGN]
+        pending = list(read_pgn_files(initial_import_paths))
+        raw_names = {n for _,g in pending for n in (g.headers['White'].strip(), g.headers['Black'].strip())}
+        stockfish = sorted((n for n in raw_names if n.casefold().startswith('stockfish')), key=str.casefold)
+        if not stockfish: raise SystemExit('No Stockfish player found in initial.pgn to anchor at 3200.')
+        for name in raw_names:
+            aliases[name] = name; entities.setdefault(name, {'display_name':name})
+        config['anchor_id'] = aliases[stockfish[0]]; config['initialized'] = True
+    else:
+        if not config.get('initialized') or not db: raise SystemExit('Run Initial first to establish MCCR history and the Stockfish anchor.')
+        if not args.engine.strip(): raise SystemExit('Enter the exact PGN player name of the engine being added/updated.')
+        if not args.display_name.strip(): raise SystemExit('Enter the display name to show in the MCCR rating list.')
+        # Determine an identity to attach the PGN's raw player name to.
+        if args.action == 'add':
+            if args.engine in aliases: raise SystemExit(f'{args.engine!r} is already mapped to an MCCR engine. Use Update existing engine instead.')
+            eid = args.engine.strip()
+            if eid in entities: raise SystemExit('That engine identity already exists; choose Update existing engine if this is a new version.')
+            entities[eid] = {'display_name':args.display_name.strip()}
+        else:
+            if not args.replace_existing.strip(): raise SystemExit('For Update, select the existing engine display name to replace.')
+            matches = [eid for eid, ent in entities.items() if ent.get('display_name','').casefold() == args.replace_existing.strip().casefold()]
+            if len(matches) != 1: raise SystemExit(f'Could not uniquely find existing engine {args.replace_existing!r}. Existing names: ' + ', '.join(sorted(ent.get('display_name',eid) for eid,ent in entities.items())))
+            eid = matches[0]
+            entities[eid]['display_name'] = args.display_name.strip()
+        aliases[args.engine.strip()] = eid
+
+    # Import games from the initial file once, or all currently present PGNs for add/update.
+    import_paths = initial_import_paths if args.action == 'initial' else [x for x in paths if x.exists()]
+    added = 0
+    for path, g in read_pgn_files(import_paths):
+        fp = game_fingerprint(g)
+        if fp in seen: continue
+        wraw, braw = g.headers['White'].strip(), g.headers['Black'].strip()
+        if wraw not in aliases or braw not in aliases:
+            unknown = [n for n in (wraw,braw) if n not in aliases]
+            raise SystemExit('PGN includes unregistered engine name(s): ' + ', '.join(unknown) + '. Register one engine per run using the exact PGN name.')
+        item = {'fingerprint':fp, 'white_id':aliases[wraw], 'black_id':aliases[braw], 'white_raw':wraw, 'black_raw':braw,
+                'result':g.headers['Result'], 'date':g.headers.get('Date',''), 'moves_uci':[m.uci() for m in g.mainline_moves()], 'source':path.name}
+        db.append(item); seen.add(fp); added += 1
+    if not db: raise SystemExit('No valid games were imported.')
+    # Ensure every historical game remains attached to an engine identity.
+    ids = {x for g in db for x in (g['white_id'],g['black_id'])}
+    for eid in ids: entities.setdefault(eid, {'display_name':eid})
+    bayes = run_bayeselo(db, config['anchor_id'], 3200.0)
+    missing = ids - set(bayes)
+    if missing: raise RuntimeError('BayesElo did not return ratings for identities: ' + ', '.join(sorted(missing)))
+
+    # Initial run publishes every calculated estimate. Later runs freeze everyone except the
+    # selected add/update identity, whose rating uses all its historical and newly imported games.
+    if args.action == 'initial':
+        for eid in ids: base[eid] = {'rating':bayes[eid]['rating'], 'plus':bayes[eid]['plus'], 'minus':bayes[eid]['minus'], 'engine':entities[eid]['display_name']}
+        updated_id = None
+    else:
+        updated_id = aliases[args.engine.strip()]
+        if args.action == 'add' and updated_id in base: raise SystemExit('This engine is already in the published base; use Update instead.')
+        base[updated_id] = {'rating':bayes[updated_id]['rating'], 'plus':bayes[updated_id]['plus'], 'minus':bayes[updated_id]['minus'], 'engine':entities[updated_id]['display_name']}
+        # Refresh display names without changing frozen ratings for other engines.
+        for eid in list(base):
+            if eid in entities: base[eid]['engine'] = entities[eid]['display_name']
+
+    stats = stats_for(db)
+    rows = []
+    for eid, st in stats.items():
+        rating_rec = base.get(eid) or {'rating':bayes[eid]['rating'],'plus':bayes[eid]['plus'],'minus':bayes[eid]['minus'],'engine':entities[eid]['display_name']}
+        total = st['games']; opps = st['opponents']
+        opp_ratings = [base[o]['rating'] for o in opps if o in base]
+        rows.append({'engine':entities.get(eid,{}).get('display_name',rating_rec['engine']), 'rating':rating_rec['rating'], 'plus':rating_rec.get('plus',0), 'minus':rating_rec.get('minus',0),
+            'score_pct':100*st['score']/total if total else 0, 'opponent_rating':round(sum(opp_ratings)/len(opp_ratings)) if opp_ratings else '—',
+            'draw_pct':100*st['draws']/total if total else 0, 'games':total, 'wins':st['wins'], 'draws':st['draws'], 'losses':st['losses'], 'opponents':len(opps),
+            'status':'initial / provisional' if args.action == 'initial' else ('updated version' if eid == updated_id and args.action == 'update' else ('new entrant / provisional' if eid == updated_id else 'established / frozen'))})
+    # Persist database first-class; source PGNs can now be removed after successful run.
+    RATINGS_DIR.mkdir(parents=True, exist_ok=True)
+    with DB_FILE.open('w', encoding='utf-8') as f:
+        for item in db: f.write(json.dumps(item, ensure_ascii=False, separators=(',',':'))+'\n')
+    save_json(ALIASES_FILE, aliases); save_json(CONFIG_FILE, config); write_base(base)
+    note = f"BayesElo on {len(db)} unique cumulative games. {added} new games imported this run. Historical games remain in ratings/games.jsonl; duplicate games are skipped. Existing ratings are frozen except the engine explicitly added or updated."
+    if args.action == 'initial' and legacy_base:
+        note += ' Legacy migration: all PGNs still present in pgn/ were imported because the previous version had no permanent game database.'
+    write_outputs(rows, note)
+    print(f'Imported {added} new unique games; {len(db)} total games retained in {DB_FILE.relative_to(ROOT)}.')
+    print(f'Generated {OUT_CSV.relative_to(ROOT)} and {OUT_HTML.relative_to(ROOT)}.')
+
+if __name__ == '__main__':
+    try: main()
+    except (RuntimeError, subprocess.SubprocessError, OSError, json.JSONDecodeError) as exc: raise SystemExit(f'MCCR update failed: {exc}')
