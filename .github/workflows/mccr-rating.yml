@@ -94,14 +94,24 @@ jobs:
           BAYESELO_BIN: /usr/local/bin/bayeselo
         run: python mccr_rating.py
 
-      - name: Commit rating list and permanent game database
+      - name: Verify generated database and rating files
+        shell: bash
         run: |
+          set -euo pipefail
+          test -s ratings/games.jsonl || { echo "Expected cumulative database ratings/games.jsonl was not created." >&2; exit 1; }
+          test -s ratings/engine_aliases.json
+          test -s ratings/mccr_config.json
+          test -s ratings/mccr_ratings.csv
+          test -s index.html
+
+      - name: Commit rating list and permanent game database
+        shell: bash
+        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Force-add generated database files even if a repository .gitignore pattern
-          # (for example *.jsonl) would otherwise hide them from Git.
-          test -f ratings/games.jsonl || { echo "Expected cumulative database ratings/games.jsonl was not created by mccr_rating.py." >&2; exit 1; }
-          git add -f index.html ratings/mccr_ratings.csv ratings/base_ratings.csv ratings/games.jsonl ratings/engine_aliases.json ratings/mccr_config.json
+          git add index.html ratings/mccr_ratings.csv ratings/base_ratings.csv
+          git add -f ratings/games.jsonl ratings/engine_aliases.json ratings/mccr_config.json
           if git diff --cached --quiet; then
             echo "No rating or database changes to commit."
           else
