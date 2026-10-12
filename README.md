@@ -1,67 +1,76 @@
 # MCCR — Mobile Computer Chess Rating
 
-MCCR is an independent rating list for chess engines tested on Android. It uses BayesElo and an internal scale anchored to the Stockfish player in the **initial pool at 3200 MCCR Elo**. MCCR ratings are not directly comparable to CCRL ratings.
+**MCCR Ratinglist**
+
+**MCCR Condition:**
+- **Thread:** 1
+- **TC:** 30s + 0.5s
+- **Hash:** 16 MB
+- **Ponder:** Off
+- **Tablebase:** Disabled
+- **Hardware:** ARM64-v8.2a, Android 16, Samsung Galaxy A16 5G, processor 2.2–2.4 GHz
+- **Chess GUI:** ChessEngineTournament (CET)
+- **Opening book:** UHO 2022, 6 moves, +1.20 / +1.29
+
+**Update:** Created MCCR.
+
+**Next TestRun:** Initial Top 1–11 engines.
+
+**Rating lists:** [Open the MCCR Rating List](index.html) · [Download the rating data (CSV)](ratings/mccr_ratings.csv)
+
+---
+
+MCCR is an independent rating list for chess engines tested on Android. Its table design is inspired by CEGT's compact rating-list layout. MCCR ratings use an internal scale anchored to the Stockfish player in the initial pool at **3200 MCCR Elo**; they are not directly comparable to CCRL or CEGT ratings.
+
+## Rating table
+
+The workflow generates `index.html` with the CEGT-inspired columns **no, Program, Elo, +, −, Games, Score, Av.Op., Draws**. The CSV also preserves wins, draws, losses, number of opponents, status, and other rating data.
 
 ## Important behavior
 
-- **Persistent results:** `ratings/games.jsonl` stores every unique completed game in machine-readable form. Ratings and W/D/L statistics are calculated from this database, not just from the PGNs currently in `pgn/`.
-- **Safe PGN deletion:** after a successful workflow run commits `ratings/games.jsonl`, the source PGN may be deleted from the repository. Its games remain in the database.
-- **Duplicate protection:** every imported game has a fingerprint. If the same PGN/game is uploaded again, it is skipped rather than counted twice.
-- **New engine:** a new engine gets a new identity and a rating based on its games plus all historical games in the cumulative database.
-- **Engine update:** choose `update`, enter the exact new PGN player name, set the new display name, and enter the current display name to replace. The new version is linked to the existing engine identity, so its old-version results and new-version results are combined. The old row is renamed/replaced, not duplicated.
-- **Frozen ratings:** after the initial list, only the engine explicitly added or updated gets a newly calculated published rating. Other established ratings remain frozen, although their cumulative games/W-D-L statistics continue to grow. This is MCCR's chosen policy, not a full-pool recalculation.
-- **Full rating table:** `ratings/mccr_ratings.csv` and `index.html` include rank, engine, rating, uncertainty (+/−), score, average opponent, draw percentage, games, wins, draws, losses, opponents, and status.
+- **Permanent game history:** `ratings/games.jsonl` stores unique completed games in machine-readable form. Ratings and W/D/L statistics are calculated from this database, not only from currently uploaded PGNs.
+- **Delete PGNs after success:** delete a source PGN only after the workflow has successfully committed the updated database. Its games remain stored.
+- **Duplicate protection:** game fingerprints prevent the same PGN game being counted twice on later uploads.
+- **Add an engine:** use workflow action `add`, provide the exact engine player name in the PGN, and choose the display name for the table.
+- **Update a version:** use `update`, provide the new version's exact PGN player name, its display name, and the existing displayed entry to replace. Historical results are retained under that engine identity and combined with new results.
+- **Frozen ratings:** after initialization, only the explicitly added or updated engine receives a newly calculated rating. Existing published ratings remain frozen, though their game statistics can change as more games are imported. This is MCCR's stability policy, not a standard full-pool recalculation.
+- **BayesElo anchor:** the Stockfish entry chosen from the initial pool is fixed at 3200. Updating that anchor cannot give it a different published rating while it remains the anchor.
 
-## Repository layout
+## First run — initialize the initial pool
 
-```text
-.github/workflows/mccr-rating.yml
-mccr_rating.py
-pgn/initial.pgn
-pgn/<uploaded-engine-test>.pgn
-ratings/base_ratings.csv       # frozen published rating reference
-ratings/engine_aliases.json    # raw PGN player names -> stable engine identities
-ratings/games.jsonl            # permanent cumulative game database
-ratings/mccr_config.json       # engine display names and initial anchor
-ratings/mccr_ratings.csv       # full generated table
-index.html                     # full generated rating page
-```
-
-## First run: initial pool
-
-1. Put the initial pool PGN at `pgn/initial.pgn`.
+1. Place the initial test PGN at `pgn/initial.pgn`.
 2. Open **Actions → MCCR Rating Update → Run workflow**.
-3. Select `initial` and run it. This action can only initialize an empty MCCR history; it cannot overwrite an already initialized database.
-4. Confirm that the workflow commits `ratings/games.jsonl`, `ratings/engine_aliases.json`, `ratings/mccr_config.json`, the base CSV, full rating CSV, and `index.html`.
+3. Select action `initial`. The initial file may contain any number of completed games.
+4. Confirm the run succeeds and commits `ratings/games.jsonl`, `ratings/engine_aliases.json`, `ratings/mccr_config.json`, the CSV files, and `index.html`.
 
-The initial PGN can contain any number of completed games and engines. The first Stockfish player name found is the 3200 anchor.
+The first Stockfish player name found in the initial PGN is used as the 3200 anchor. The initial action cannot overwrite an already initialized database.
 
 ## Add a new engine
 
-1. Upload its PGN under `pgn/` and commit it. The PGN should contain the new engine and opponents already registered in MCCR.
+1. Put the new engine's PGN under `pgn/` and commit it. Its opponents must already be registered in MCCR.
 2. Run the workflow with action `add`.
-3. **Engine:** exact `White`/`Black` PGN header name for the new engine.
-4. **Display name:** the label to show in the published table.
-5. Run the workflow. It imports all available PGNs but skips games already in the permanent database.
+3. Enter the exact PGN player name and the desired display name.
+4. Confirm the workflow succeeds. It imports available PGNs, skips already recorded games, and updates the permanent database and rating list.
 
-## Update an existing engine/version
+## Update an existing engine
 
-For example, to replace the published `Stockfish 19` entry with `Stockfish 19.1`:
-
-1. Upload a PGN containing games for the new version against already registered engines.
+1. Upload the new version's PGN under `pgn/` and commit it.
 2. Run the workflow with action `update`.
-3. **Engine:** exact new PGN player name, e.g. `Stockfish 19.1`.
-4. **Display name:** e.g. `Stockfish 19.1`.
-5. **Replace existing:** the exact current display name, e.g. `Stockfish 19`.
+3. Enter the new version's exact PGN player name, the new display name, and the exact current display name to replace.
+4. Confirm the updated row replaces the previous displayed entry and the database commit succeeds.
 
-The new PGN name is mapped to the existing stable identity. Old-version games remain attached to that identity, so BayesElo rates the combined historical record plus the new version's games. The published row is renamed to the new display name. The old games are not deleted. Other established ratings remain frozen by design.
+For example, updating `Stockfish 19` to `Stockfish 19.1` retains the old version's games under the same MCCR identity and combines them with the new version's games. This is a deliberate cumulative-version policy; it does not measure the new binary in isolation.
 
-If the updated engine is the actual anchor engine selected during initial setup, it remains the 3200 anchor; an anchor cannot simultaneously be fixed at 3200 and rated at another number.
+## Repository files
 
-## Removing uploaded PGNs
+- `.github/workflows/mccr-rating.yml` — GitHub Actions workflow
+- `mccr_rating.py` — imports games, calculates ratings, and generates the table
+- `pgn/` — temporary upload location for PGNs
+- `ratings/games.jsonl` — permanent cumulative game database
+- `ratings/engine_aliases.json` — PGN names mapped to stable engine identities
+- `ratings/mccr_config.json` — engine display names and anchor configuration
+- `ratings/base_ratings.csv` — frozen rating references
+- `ratings/mccr_ratings.csv` — full machine-readable rating table
+- `index.html` — generated public rating list
 
-Only delete a source PGN **after** the workflow succeeds and the commit contains the updated `ratings/games.jsonl`. Future runs use the database even if the original PGN files have been removed. Keep the database and its identity/config files in the repository; deleting them would erase MCCR's stored history.
-
-## Method note
-
-BayesElo calculates the updated engine's rating from the cumulative game database, with the initial Stockfish anchor fixed at 3200. Existing published ratings are frozen except for the one engine explicitly added or updated. This intentionally prioritizes historical list stability over conventional full-pool rating recalculation.
+**Important:** never delete `ratings/games.jsonl`, `ratings/engine_aliases.json`, or `ratings/mccr_config.json` if you want to preserve rating history. Remove uploaded PGNs only after their games have been imported and the database has been committed successfully.

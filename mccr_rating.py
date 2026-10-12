@@ -145,17 +145,59 @@ def esc(x):
 
 
 def write_outputs(rows, note):
+    """Write the complete CSV and a CEGT-inspired compact rating table."""
     rows.sort(key=lambda r: (-r['rating'], r['engine'].casefold()))
     fields = ['rank','engine','rating','plus','minus','score_pct','opponent_rating','draw_pct','games','wins','draws','losses','opponents','status']
     with OUT_CSV.open('w', newline='', encoding='utf-8') as f:
-        w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
-        for rank, row in enumerate(rows, 1): w.writerow({'rank':rank, **{k:row.get(k,'') for k in fields if k != 'rank'}})
-    body = []
-    for rank, r in enumerate(rows,1):
-        body.append('<tr>' + f"<td>{rank}</td><td>{esc(r['engine'])}</td><td>{r['rating']:.0f}</td><td>+{r['plus']}</td><td>−{r['minus']}</td><td>{r['score_pct']:.1f}%</td><td>{r['opponent_rating']}</td><td>{r['draw_pct']:.1f}%</td><td>{r['games']}</td><td>{r['wins']}</td><td>{r['draws']}</td><td>{r['losses']}</td><td>{r['opponents']}</td><td>{esc(r['status'])}</td></tr>")
-    stamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
-    OUT_HTML.write_text(f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MCCR Rating List</title><style>body{{font:14px system-ui,Arial;margin:1rem;color:#20252b;background:#e5f3ed;line-height:1.45}}h1{{text-align:center;color:#267747}}.sub{{text-align:center;color:#65736d}}.note{{padding:.7rem;border:1px solid #9bb9aa;border-radius:.4rem;margin:1rem 0;background:#f5fbf7}}.wrap{{overflow-x:auto;background:white}}table{{border-collapse:collapse;width:100%;min-width:1120px;font-size:13px}}th{{background:#7899e8;color:white;white-space:nowrap}}td,th{{padding:.42rem .5rem;border:1px solid #bdc9c4;text-align:right;white-space:nowrap}}td:nth-child(2),th:nth-child(2){{text-align:left}}tbody tr:nth-child(even){{background:#edf2fa}}</style></head><body><h1>MCCR Rating List</h1><div class="sub">Mobile Computer Chess Rating · Generated {stamp}</div><div class="note"><b>Method:</b> {esc(note)}<br><b>Anchor:</b> initial Stockfish reference = 3200 MCCR Elo. Not directly comparable to CCRL.<br><b>History:</b> ratings and W/D/L use all unique games retained in ratings/games.jsonl, even after source PGNs are deleted.</div><div class="wrap"><table><thead><tr><th>Rank</th><th>Engine</th><th>Rating</th><th>+</th><th>−</th><th>Score</th><th>Avg. Opponent</th><th>Draws</th><th>Games</th><th>W</th><th>D</th><th>L</th><th>Opponents</th><th>Status</th></tr></thead><tbody>{''.join(body)}</tbody></table></div></body></html>''', encoding='utf-8')
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        for rank, row in enumerate(rows, 1):
+            w.writerow({'rank': rank, **{k: row.get(k, '') for k in fields if k != 'rank'}})
 
+    body = []
+    for rank, r in enumerate(rows, 1):
+        body.append(
+            '<tr>'
+            f'<td class="num">{rank}</td>'
+            f'<td class="program">{esc(r["engine"])}</td>'
+            f'<td class="num elo">{r["rating"]:.0f}</td>'
+            f'<td class="num">{r["plus"]}</td>'
+            f'<td class="num">{r["minus"]}</td>'
+            f'<td class="num">{r["games"]}</td>'
+            f'<td class="num">{r["score_pct"]:.1f}%</td>'
+            f'<td class="num">{esc(r["opponent_rating"])}</td>'
+            f'<td class="num">{r["draw_pct"]:.1f}%</td>'
+            '</tr>'
+        )
+    stamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+    html = f'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCCR Rating List</title><style>
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; padding: 18px 10px 36px; color: #20252b; background: #fff; font: 13px Arial, Helvetica, sans-serif; }}
+.page {{ max-width: 1000px; margin: 0 auto; }}
+.banner {{ max-width: 620px; margin: 0 auto 18px; padding: 12px 8px; text-align: center; color: #222; font-family: Georgia, 'Times New Roman', serif; font-size: 20px; font-weight: bold; line-height: 1.15; background: linear-gradient(#fff, #d4d4d4 48%, #f8f8f8); border: 1px solid #a6a6a6; border-radius: 18px; box-shadow: inset 0 1px 3px #fff, 0 1px 3px #aaa; }}
+.sub {{ margin: -8px 0 14px; color: #555; text-align: center; font-size: 11px; }}
+.info {{ margin: 0 auto 14px; padding: 8px 10px; max-width: 900px; background: #f5f7fb; border: 1px solid #c6cbd5; line-height: 1.5; font-size: 12px; }}
+.table-wrap {{ width: 100%; overflow-x: auto; }}
+table {{ width: 100%; min-width: 610px; border-collapse: separate; border-spacing: 1px; background: #8ca9c4; font-size: 12px; }}
+th {{ padding: 5px 6px; color: #001b73; background: #a9c4e4; border: 1px solid #d5e0ef; text-align: center; white-space: nowrap; font-weight: bold; }}
+td {{ padding: 4px 6px; background: #e8edf4; border: 1px solid #c2d0df; white-space: nowrap; }}
+tbody tr:nth-child(even) td {{ background: #f3f5f8; }}
+tbody tr:hover td {{ background: #fff6d9; }}
+.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+.program {{ min-width: 190px; text-align: left; }}
+.elo {{ font-weight: bold; }}
+.footer {{ margin-top: 12px; text-align: center; color: #555; font-size: 11px; }}
+@media (max-width: 650px) {{ body {{ padding: 12px 4px 24px; }} .banner {{ font-size: 18px; }} table {{ font-size: 11px; }} th, td {{ padding: 4px; }} }}
+</style></head><body><main class="page">
+<div class="banner">MCCR Rating List<br><span style="font-size:14px">Mobile Computer Chess Rating</span></div>
+<div class="sub">Single Versions · Generated {stamp}</div>
+<div class="info"><b>Testing conditions:</b> 1 thread · 30s + 0.5s · Hash 16 MB · Ponder off · Tablebase disabled · Samsung Galaxy A16 5G (ARM64-v8.2a, Android 16, 2.2–2.4 GHz) · ChessEngineTournament · UHO 2022 6 moves +1.20/+1.29.<br><b>Method:</b> {esc(note)}<br><b>Scale:</b> Initial Stockfish reference = 3200 MCCR Elo. MCCR ratings are independent and not directly comparable with CCRL/CEGT.</div>
+<div class="table-wrap"><table><thead><tr><th>no</th><th>Program</th><th>Elo</th><th>+</th><th>−</th><th>Games</th><th>Score</th><th>Av.Op.</th><th>Draws</th></tr></thead><tbody>{''.join(body)}</tbody></table></div>
+<div class="footer">MCCR · Ratings and results are based on unique games preserved in the cumulative database.</div>
+</main></body></html>'''
+    OUT_HTML.write_text(html, encoding='utf-8')
 
 def main():
     p = argparse.ArgumentParser()
