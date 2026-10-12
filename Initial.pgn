@@ -1,0 +1,100 @@
+[Event "MCEC S3 Semifinal"]
+[Site "ChessEnginesTournament"]
+[Date "2026.10.10"]
+[Round "1.1"]
+[White "Cinder 20261010"]
+[Black "Stockfish 260930"]
+[Result "1/2-1/2"]
+[TimeControl "1+1"]
+[ECO "B00"]
+[WhiteElo "1500"]
+[BlackElo "1500"]
+[PlyCount "140"]
+[Termination "adjudication"]
+[TerminationDetails "GUI draw rule"]
+[EventType "round robin"]
+
+1. e4 d6 2. d4 g6 3. Nc3 Bg7 4. f4 Nc6 5. Be3 Nf6 6. Nf3 O-O 7. Qd2 a6 8. h3 b5
+9. e5 {[13] 0.91 1.8s 60.2knps 0tb e5 Nd7} 9... Nd7 {[19] 0.97 5.8s 120.1knps
+0tb ..Nd7 h4} 10. h4 {[12] 1.02 802ms 94.5knps 0tb h4 h5} 10... h5 {[18] 0.87
+533ms 166.0knps 0tb ..h5 d5} 11. d5 {[16] 0.69 3.9s 89.1knps 0tb d5 Na5} 11...
+Na5 {[16] 0.9 1.4s 144.2knps 0tb ..Na5 g4} 12. g4 {[14] 0.6 2.5s 95.3knps 0tb
+g4 b4} 12... dxe5 {[19] 0.51 3.8s 153.9knps 0tb ..dxe5 gxh5} 13. gxh5 {[14]
+0.78 1.8s 99.8knps 0tb gxh5 exf4} 13... exf4 {[16] 0.47 829ms 161.6knps 0tb
+..exf4 Bd4} 14. Bd4 {[15] 0.84 1.8s 108.5knps 0tb Bd4 Nf6} 14... Nf6 {[15] 0.5
+838ms 152.5knps 0tb ..Nf6 hxg6} 15. hxg6 {[16] 0.83 2.0s 102.6knps 0tb hxg6 b4}
+15... fxg6 {[20] 0.8 6.5s 143.8knps 0tb ..fxg6 Rg1} 16. Rg1 {[14] 1.29 2.0s
+103.9knps 0tb Rg1 Bg4} 16... Bf5 {[19] 1.31 4.8s 138.2knps 0tb ..Bf5 Bd3} 17.
+Bd3 {[14] 1.25 1.4s 106.3knps 0tb Bd3 Nc4} 17... Nc4 {[16] 1.22 928ms 136.3knps
+0tb ..Nc4 Bxc4} 18. Qe2 {[15] 1.29 2.7s 106.4knps 0tb Qe2 Ne3} 18... Ne3 {[17]
+1.22 1.0s 139.0knps 0tb ..Ne3 Bxf5} 19. Bxf5 {[15] 1.52 1.3s 115.1knps 0tb Bxf5
+gxf5} 19... gxf5 {[16] 1.05 1.2s 146.0knps 0tb ..gxf5 Rg5} 20. Nd1 {[14] 1.6
+1.9s 118.0knps 0tb Nd1 Nexd5} 20... Neg4 {[18] 0.5 4.0s 150.9knps 0tb ..Neg4
+Qe6+} 21. Qe6+ {[16] 1.5 1.2s 117.0knps 0tb Qe6+ Rf7} 21... Kh8 {[17] 0.42
+487ms 177.3knps 0tb ..Kh8 Qxf5} 22. Qxf5 {[18] 0.21 4.7s 113.4knps 0tb Qxf5 e5}
+22... e5 {[17] 0.06 1.0s 158.4knps 0tb ..e5 Bc5} 23. Bc5 {[20] 0.19 5.8s
+113.0knps 0tb Bc5 Nh6} 23... Qxd5 {[21] 0.04 853ms 206.8knps 4tb ..Qxd5 Bxf8}
+24. Bxf8 {[19] 0.26 963ms 146.7knps 1tb Bxf8 Qxf3} 24... Qxf3 {[20] 0.0 936ms
+200.7knps 2tb ..Qxf3 Bxg7+} 25. Bxg7+ {[22] 0.28 3.9s 153.8knps 2tb Bxg7+ Kxg7}
+25... Kxg7 {[22] 0.0 717ms 206.4knps 4tb ..Kxg7 Qd3} 26. Qd3 {[19] 0.21 1.7s
+158.9knps 0tb Qd3 Qxd3} 26... Qxd3 {[22] 0.0 713ms 225.0knps 7tb ..Qxd3 cxd3}
+27. cxd3 {[20] 0.14 1.8s 159.8knps 1tb cxd3 Rh8} 27... Rh8 {[22] 0.0 985ms
+229.1knps 5tb ..Rh8 Nf2} 28. Nf2 {[24] 0.15 3.3s 143.8knps 2tb Nf2 Rxh4} 28...
+Rxh4 {[25] 0.0 752ms 234.0knps 0tb ..Rxh4 Rc1} 29. Nxg4 {[18] 0.19 1.6s
+157.8knps 11tb Nxg4 Nxg4} 29... Nxg4 {[22] 0.0 845ms 202.4knps 13tb ..Nxg4 Rc1}
+30. Ke2 {[21] 0.12 2.3s 143.4knps 3tb Ke2 Kf6} 30... Kf6 {[21] 0.09 1.1s
+208.7knps 12tb ..Kf6 Rh1} 31. Rh1 {[20] 0.14 1.4s 150.3knps 106tb Rh1 Rxh1}
+31... Rxh1 {[21] 0.0 877ms 223.1knps 17tb ..Rxh1 Rxh1} 32. Rxh1 {[19] 0.17 2.1s
+156.1knps 0tb Rxh1 Ke6} 32... Ke6 {[22] 0.01 1.1s 212.0knps 163tb ..Ke6 Rh7}
+33. Rh7 {[22] 0.17 3.6s 151.9knps 51tb Rh7 Kd6} 33... Kd6 {[25] 0.0 1.1s
+208.3knps 130tb ..Kd6 Kf3} 34. Rh4 {[25] 0.14 3.5s 153.3knps 34tb Rh4 Nf6}
+34... Ne3 {[32] 0.0 897ms 258.1knps 17tb ..Ne3 Rh6+} 35. Rh6+ {[26] 0.12 1.7s
+198.7knps 17tb Rh6+ Kd5} 35... Kc5 {[37] 0.0 867ms 266.0knps 58tb ..Kc5 Rxa6}
+36. Rxa6 {[27] 0.12 1.8s 210.9knps 17tb Rxa6 Nf5} 36... Nc2 {[38] 0.0 825ms
+307.9knps 84tb ..Nc2 Ra8} 37. Ra8 {[25] 0.17 2.9s 185.3knps 73tb Ra8 Nd4+}
+37... Nd4+ {[46] 0.0 833ms 299.0knps 247tb ..Nd4+ Kf2} 38. Kf2 {[24] 0.19 1.3s
+209.8knps 12tb Kf2 Kd5} 38... Kc6 {[40] 0.0 932ms 296.4knps 509tb ..Kc6 Rd8}
+39. a3 {[26] 0.19 1.9s 195.9knps 176tb a3 Kd6} 39... Kd7 {[59] 0.0 936ms
+267.9knps 410tb ..Kd7 Rg8} 40. Ra6 {[24] 0.19 1.5s 196.5knps 43tb Ra6 Nb3}
+40... c6 {[58] 0.0 990ms 266.7knps 327tb ..c6 Ra8} 41. Ra8 {[25] 0.19 1.4s
+206.2knps 56tb Ra8 Nb3} 41... Kd6 {[41] 0.0 1.0s 235.4knps 949tb ..Kd6 Re8} 42.
+Rd8+ {[26] 0.15 1.5s 232.4knps 45tb Rd8+ Ke6} 42... Ke7 {[40] 0.0 974ms
+297.3knps 926tb ..Ke7 Rg8} 43. Rh8 {[27] 0.14 1.5s 240.6knps 1.0ktb Rh8 Ke6}
+43... Kd6 {[45] 0.0 950ms 324.0knps 173tb ..Kd6 Rc8} 44. Rc8 {[27] 0.14 1.6s
+239.7knps 44tb Rc8 Nb3} 44... Kd7 {[50] 0.0 993ms 327.5knps 642tb ..Kd7 Rg8}
+45. Ra8 {[26] 0.12 1.3s 243.3knps 55tb Ra8 Nb3} 45... Nb3 {[42] 0.0 943ms
+314.4knps 176tb ..Nb3 Kf3} 46. Kf3 {[26] 0.11 1.5s 237.5knps 32tb Kf3 Kd6}
+46... Ke6 {[47] 0.0 2.0s 248.5knps 1.2ktb ..Ke6 Rd8} 47. Rd8 {[25] 0.1 1.1s
+220.7knps 19tb Rd8 Ke7} 47... Nd2+ {[51] 0.0 1.0s 320.4knps 298tb ..Nd2+ Ke2}
+48. Ke2 {[25] 0.1 1.0s 226.3knps 40tb Ke2 Nb3} 48... Nb3 {[47] 0.0 1.4s
+306.5knps 784tb ..Nb3 Re8+} 49. Kd1 {[28] 0.1 1.1s 266.6knps 7tb Kd1 Nd4} 49...
+Ke7 {[44] 0.0 1.0s 300.2knps 157tb ..Ke7 Rg8} 50. Rh8 {[24] 0.15 885ms
+251.1knps 0tb Rh8 Ke6} 50... Nd4 {[45] 0.0 1.0s 237.2knps 449tb ..Nd4 Rh6} 51.
+Rh6 {[24] 0.17 973ms 218.9knps 5tb Rh6 Kd7} 51... Kd7 {[44] 0.0 996ms 261.0knps
+139tb ..Kd7 Kd2} 52. Ke1 {[26] 0.16 1.3s 222.1knps 1tb Ke1 Nf5} 52... Nb3 {[45]
+0.0 975ms 275.0knps 133tb ..Nb3 Ke2} 53. Ke2 {[22] 0.15 2.3s 167.3knps 191tb
+Ke2 Nc1+} 53... Nd4+ {[48] 0.0 1.2s 278.1knps 436tb ..Nd4+ Kd2} 54. Kf2 {[20]
+0.15 819ms 178.8knps 32tb Kf2 Ke7} 54... Ke7 {[39] 0.0 4.0s 210.4knps 4.0ktb
+..Ke7 Kg2} 55. Kg2 {[19] 0.16 702ms 205.7knps 70tb Kg2 Kd7} 55... Kd7 {[45] 0.0
+1.4s 246.0knps 794tb ..Kd7 Kh3} 56. Kh3 {[20] 0.19 1.1s 180.5knps 78tb Kh3 Nb3}
+56... Nf5 {[41] 0.0 932ms 298.3knps 154tb ..Nf5 Rh7+} 57. Rg6 {[25] 0.08 2.2s
+188.4knps 50tb Rg6 Nd4} 57... Nd4 {[46] 0.0 1.1s 274.2knps 305tb ..Nd4 Rh6} 58.
+Kg2 {[25] 0.14 1.4s 187.9knps 15tb Kg2 Kc7} 58... Ke7 {[38] 0.0 959ms 256.7knps
+74tb ..Ke7 Kf2} 59. Rh6 {[27] 0.14 1.4s 178.7knps 95tb Rh6 Kd7} 59... Kd7 {[48]
+0.0 977ms 257.3knps 354tb ..Kd7 Kf2} 60. Rg6 {[26] 0.11 956ms 216.4knps 4tb Rg6
+Kc7} 60... Ke7 {[39] 0.0 1.2s 241.2knps 592tb ..Ke7 Kf2} 61. Kf1 {[26] 0.11
+814ms 223.9knps 2tb Kf1 Kd7} 61... Kd7 {[40] 0.0 1.2s 256.9knps 435tb ..Kd7
+Ke1} 62. Rf6 {[27] 0.08 1.3s 220.0knps 23tb Rf6 Kc7} 62... Kc7 {[51] 0.0 1.4s
+285.3knps 245tb ..Kc7 Ke1} 63. Rg6 {[26] 0.11 801ms 233.9knps 4tb Rg6 Kd7}
+63... Kd7 {[46] 0.0 1.0s 269.2knps 535tb ..Kd7 Ke1} 64. Ke1 {[25] 0.1 926ms
+220.1knps 5tb Ke1 Nf5} 64... Nb3 {[46] 0.0 1.2s 268.1knps 345tb ..Nb3 Ke2} 65.
+Rh6 {[26] 0.1 1.6s 205.7knps 29tb Rh6 Nd4} 65... Nd4 {[49] 0.0 1.0s 304.3knps
+285tb ..Nd4 Rg6} 66. Kd1 {[25] 0.08 724ms 230.5knps 24tb Kd1 Nf5} 66... Kc7
+{[46] 0.0 1.1s 299.3knps 157tb ..Kc7 Rf6} 67. Kc1 {[23] 0.08 687ms 222.1knps
+3tb Kc1 Kd7} 67... Kd7 {[46] 0.0 1.0s 308.8knps 113tb ..Kd7 Rg6} 68. Kd2 {[24]
+0.08 599ms 230.8knps 9tb Kd2 Nb3+} 68... Ke7 {[39] 0.0 1.1s 292.8knps 111tb
+..Ke7 Rg6} 69. Kd1 {[26] 0.08 984ms 227.9knps 25tb Kd1 Kd7} 69... Ne6 {[38] 0.0
+1.2s 255.6knps 624tb ..Ne6 Kc2} 70. Ke2 {[21] 0.08 1.0s 207.7knps 56tb Ke2
+Nd4+} 70... Kd6 {[34] 0.0 999ms 268.2knps 83tb ..Kd6 Kd2} {[%playeraction draw
+offer]} 71. -- {[%playeraction draw accept]} 1/2-1/2
+
