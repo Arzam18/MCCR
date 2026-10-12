@@ -1,0 +1,115 @@
+name: MCCR Rating Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "initial = rate initial connected pool; entrant = rate one newcomer against frozen ratings"
+        required: true
+        default: initial
+        type: choice
+        options: [initial, entrant]
+      engine:
+        description: "Exact PGN player name for entrant mode"
+        required: false
+        type: string
+  push:
+    paths:
+      - "pgn/**/*.pgn"
+      - "pgn/*.pgn"
+      - "ratings/base_ratings.csv"
+      - "mccr_rating.py"
+      - ".github/workflows/mccr-rating.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mccr-rating-update
+  cancel-in-progress: false
+
+jobs:
+  calculate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout MCCR repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PGN parser
+        run: python -m pip install --upgrade pip python-chess
+
+      # Fetch and compile a public BayesElo source mirror for inspection/validation.
+      # The starter script's ratings are explicitly NOT BayesElo ratings yet.
+      - name: Download and compile BayesElo reference
+        continue-on-error: true
+        run: |
+          git clone --depth 1 https://github.com/Gomocup/GomocupEloRating.git /tmp/GomocupEloRating
+          if [ -f /tmp/GomocupEloRating/bayeselo.cpp ]; then
+            g++ -O2 -std=c++11 /tmp/GomocupEloRating/bayeselo.cpp -o /tmp/bayeselo
+            echo "BayesElo compiled at /tmp/bayeselo"
+          else
+            echo "BayesElo source was not found in this mirror; continuing with MCCR estimator."
+          fi
+
+      - name: Validate PGN input
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import chess.pgn
+          files = list(Path("pgn").rglob("*.pgn"))
+          if not files:
+              raise SystemExit("No PGN files under pgn/. Upload your PGN first.")
+          games = 0
+          for path in files:
+              with path.open(encoding="utf-8", errors="replace") as f:
+                  while True:
+                      g = chess.pgn.read_game(f)
+                      if g is None:
+                          break
+                      if g.headers.get("Result") in ("1-0", "0-1", "1/2-1/2"):
+                          games += 1
+          print(f"Found {games} completed games in {len(files)} PGN file(s).")
+          if not games:
+              raise SystemExit("No completed games found.")
+          PY
+
+      - name: Calculate rating list
+        env:
+          MCCR_MODE: ${{ inputs.mode || 'initial' }}
+          MCCR_ENGINE: ${{ inputs.engine || '' }}
+          MCCR_ANCHOR_ENGINE: Stockfish
+          MCCR_ANCHOR_ELO: "3000"
+        run: |
+          if [ "$MCCR_MODE" = "entrant" ]; then
+            test -n "$MCCR_ENGINE" || { echo "Enter engine name for entrant mode."; exit 1; }
+            python mccr_rating.py --mode entrant --engine "$MCCR_ENGINE"
+          else
+            python mccr_rating.py --mode initial
+          fi
+
+      - name: Commit generated ratings
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html ratings/mccr_ratings.csv
+          if git diff --cached --quiet; then
+            echo "No rating changes to commit."
+          else
+            git commit -m "Update MCCR rating list"
+            git push
+          fi
+
+      - name: Upload generated files
+        uses: actions/upload-artifact@v4
+        with:
+          name: mccr-rating-results
+          path: |
+            index.html
+            ratings/mccr_ratings.csv
